@@ -50,7 +50,7 @@ Ensure you have the following installed:
    ```
 2. **Download AI models**
    ```sh
-   ollama pull gemma:7b
+   ollama pull llama3:8b
    ollama pull deepseek-coder:6.7b
    ```
 3. **Start Neo4j**
