@@ -11,7 +11,7 @@ const promptsFiles = {
     nlpToCypher: `${promptsFolder}/nlpToCypher.md`,
     responseTemplateFromJson: `${promptsFolder}/responseTemplateFromJson.md`,
     context: `${promptsFolder}/context.md`,
-}
+};
 
 // ✅ Load Neo4j Credentials
 const config = {
@@ -58,12 +58,12 @@ export async function prompt(question, debugLog = () => { }) {
     const vectorIndex = await Neo4jVectorStore.fromExistingGraph(ollamaEmbeddings, config);
     // ✅ LangChain Pipeline
     const chain = RunnableSequence.from([
-        retrieveVectorSearchResults,
-        generateQueryIfNoCached,
-        validateAndExecuteQuery,
-        generateNLPResponse,
-        cacheResult,
-        parseTemplateToData,
+        retrieveVectorSearchResults, // Step 1: Check for cached answers using vector search event if not found returns cached: false
+        generateQueryIfNoCached, // Step 2: If no cached answer, generate Cypher query using AI
+        validateAndExecuteQuery, // Step 3: Validate and execute the Cypher query against Neo4j
+        generateNLPResponse, // Step 4: Generate a natural language response using AI based on the query results, e.g: {Results: [{name: "Alice", age: 30}, {name: "Bob", age: 25}]}
+        cacheResult, // Step 5: Cache new question-answer pairs in Neo4j vector store for future retrieval
+        parseTemplateToData, // Step 6: Parse the AI-generated answer template and replace placeholders with actual data from Neo4j results
     ]);
 
     const result = await chain.invoke({ question });

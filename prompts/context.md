@@ -1,7 +1,7 @@
-### **📜 Context for AI to Generate Specific Questions on Student Activity in Neo4j**
+### **📜 Context for AI to Generate Specific Queries on Dental Clinic Activity in Neo4j**
 
 #### **Introduction**
-This database models student activity in an online academy, tracking **student purchases, course progress, and sales transactions**. The database is structured in **Neo4j**, a graph database, where relationships define the connections between students, courses, and their activities.
+This database models a dental clinic ecosystem, tracking **Clinics (Units), Dentists, Specialties, and Client Appointments.**. The system uses **Neo4j**, to manage the relationships between professional schedules and patient visits.
 
 ---
 
@@ -9,72 +9,85 @@ This database models student activity in an online academy, tracking **student p
 The system follows strict rules to ensure data consistency and accuracy:
 
 #### **📍 Entities & Relationships**
-- **Student (:Student)**
-  - Represents a student enrolled in the academy.
-  - Has attributes: `id`, `name`, `email`, `phone`.
+- **Client (:Client)**
+  - Represents the patient.
+  - Has attributes: `id`, `name`.
 
-- **Course (:Course)**
-  - Represents an available course.
-  - Has attributes: `name`, `url`.
+- **Dentist (:Dentist)**
+  - The professional performing the procedure.
+  - Has attributes: `id`, `name`.
 
-- **Progress (:PROGRESS)**
-  - Tracks a student's progress in a course.
-  - Relationship: `(s:Student)-[:PROGRESS]->(c:Course)`.
-  - Has attributes: `progress` (integer from 0 to 100).
+- **Unit (:Unit)**
+  - The physical clinic location.
+  - Has attributes: `id`, `name` `zipCode`, `openTime`, `closeTime`.
 
-- **Sales (:PURCHASED)**
-  - Represents a student's purchase or refund of a course.
-  - Relationship: `(s:Student)-[:PURCHASED]->(c:Course)`.
+- **Specialty (:Specialty)**
+  - Medical fields (e.g., "Ortodontia", "Endodontia").
+  - Relationship: `(s:Dentist)-[:SPECIALIZED_IN]->(c:Specialty)`.
   - Has attributes: `status` ("paid" or "refunded"), `paymentMethod` ("pix" or "credit_card"), `paymentDate`, `amount`.
 
+- **Visit (:VISITED)**
+  - Relationship: `(s:Client)-[:VISITED]->(c:Unit)`.
+  - Has attributes: `date`.
 ---
 
 ### **✅ Business Rules (Data Integrity Constraints)**
-1. **A student can only have progress in a course they purchased.**
-   - A `PROGRESS` relationship can only exist if there is a `PURCHASED` relationship where `status = "paid"`.
+1. **A client can only have an appointment with a dentist if they visit the unit.**
+   - An `APPOINTMENT_WITH` relationship should ideally coexist with a `VISITED` relationship to the same `Unit` on the same `date` (though in your graph, they are separate links from the `Client`).
 
-2. **A student can only have one progress entry per course.**
-   - If a `PROGRESS` relationship already exists, the `progress` value is updated instead of creating a new relationship.
+2. **Unique Appointments per Day/Dentist.**
+   - A Client should only have one `APPOINTMENT_WITH` a specific `Dentist` per `date`. If a new entry is made for the same day, the `amount` or `status` should be updated instead of creating a duplicate relationship (this is handled by `MERGE` in your Cypher seed).
 
 3. **A student can only purchase or refund a course once.**
-   - A `PURCHASED` relationship can only exist once per `(Student, Course)`. If a new status is set, the existing record is updated.
+   - A `Dentist` can only perform appointments at a `Unit` where they have a `WORKS_AT` relationship.
+   - A `PURCHASED` relationship can only exist once per `(Student, Course)`. If a ne status is set, the existing record is updated.
+
+4. **Payment and Status Tracking.**
+   - Every `APPOINTMENT_WITH` must have a defined `status` ("Não Inicializado", "Em Andamento", "Completo") and a `paymentMethod` ("pix", "credit_card", "debit_card").
 
 ---
 
 ### **📌 Cypher Queries Mapping the Rules**
 
-#### **1️⃣ Verify if a Student Exists**
+#### **1️⃣ Find Appointments by Client Name (Core Rule)
+Use this pattern to find everything a specific client has done:
 ```cypher
-MATCH (s:Student) RETURN s LIMIT 5;
+MATCH (c:Client)
+WHERE c.name CONTAINS "Nome do Cliente"
+MATCH (c)-[a:APPOINTMENT_WITH]->(d:Dentist)
+MATCH (c)-[v:VISITED {date: a.date}]->(u:Unit)
+RETURN c.name AS Client, d.name AS Dentist, u.name AS Clinic, a.date AS Date, a.amount AS Price, a.status AS Status;
 ```
 
-#### **2️⃣ Verify Student's Course Progress (Must Have Purchased the Course)**
+#### **2️⃣ Summary of Total Spent by Client**
 ```cypher
-MATCH (s:Student)-[:PURCHASED {status: "paid"}]->(c:Course)
-OPTIONAL MATCH (s)-[p:PROGRESS]->(c)
-RETURN s.name AS Student, c.name AS Course, p.progress AS Progress;
+MATCH (c:Client)-[a:APPOINTMENT_WITH]->()
+WHERE c.name CONTAINS "Client Name"
+RETURN c.name AS Client, sum(a.amount) AS TotalSpent;
 ```
 
-#### **3️⃣ Ensure a Student Can Only Buy or Refund a Course Once**
+#### **3️⃣ Find Clients with Appointments but No Record of Visit (Invalid Case)**
 ```cypher
-MATCH (s:Student)-[p:PURCHASED]->(c:Course)
-RETURN s.name, c.name, p.status, p.paymentMethod, p.paymentDate, p.amount;
-```
-
-#### **4️⃣ Find Students Who Have Progress Without Purchase (Invalid Case)**
-```cypher
-MATCH (s:Student)-[p:PROGRESS]->(c:Course)
+MATCH (c:Client)-[a:APPOINTMENT_WITH]->(d:Dentist)
 WHERE NOT EXISTS {
-    MATCH (s)-[:PURCHASED {status: "paid"}]->(c)
+    MATCH (c)-[:VISITED {date: a.date}]->(:Unit)
 }
-RETURN s.name AS Student, c.name AS Course, p.progress AS Progress;
+RETURN c.name AS Client, d.name AS Dentist, a.date AS Date;
 ```
 
-#### **5️⃣ Find Students Who Bought but Never Started a Course**
+#### **4️⃣ Find Dentists Working Outside Their Scheduled Units**
 ```cypher
-MATCH (s:Student)-[:PURCHASED {status: "paid"}]->(c:Course)
-WHERE NOT (s)-[:PROGRESS]->(c)
-RETURN s.name AS Student, c.name AS Course;
+MATCH (c:Client)-[a:APPOINTMENT_WITH]->(d:Dentist)
+MATCH (c)-[:VISITED {date: a.date}]->(u:Unit)
+WHERE NOT (d)-[:WORKS_AT]->(u)
+RETURN d.name AS Dentist, u.name AS Unit, a.date AS Date, c.name AS Client;
+```
+
+#### **5️⃣ List All Unfinished Treatments by Client**
+```cypher
+MATCH (c:Client)-[a:APPOINTMENT_WITH]->(d:Dentist)
+WHERE c.name CONTAINS "Client Name" AND a.status <> "Completo"
+RETURN c.name, d.name, a.date, a.status;
 ```
 
 ---
@@ -82,19 +95,20 @@ RETURN s.name AS Student, c.name AS Course;
 ### **🚀 AI Question Examples Based on This Context**
 
 #### ✅ **Valid Scenarios**
-1. "Which students have purchased a course and started their progress?"
-2. "What is the average progress of students who purchased 'Mastering Node.js Streams'?"
-3. "List all students who completed a course (progress = 100%)."
+1. "Which clients have appointments scheduled with Dr. [Name]?"
+2. "What is the total amount spent by client '[Client Name]' on all treatments?"
+3. "List all clients who have completed their treatments (status = 'Completo')."
+4. "Which unit did client '[Client Name]' visit on [Date]?"
 
 #### ❌ **Edge Cases & Invalid Data Detection**
-4. "Are there students with progress in a course they never bought?"
-5. "Has any student purchased a course multiple times?"
-6. "Which students purchased a course but never started it?"
+5. "Are there any clients with an appointment record but no recorded visit to a clinic unit?"
+6. "Has any dentist performed an appointment at a unit where they are not officially scheduled to work?"
+7. "Which clients have 'Em Andamento' (In Progress) treatments that started more than 30 days ago?"
 
 ---
 
 ### **🎯 Summary**
-- **Neo4j is used to track student activity** in the academy.
-- **Graph relationships enforce business rules** for purchases and progress.
-- **Data integrity constraints prevent inconsistencies**.
-- **AI-generated questions should respect these rules** and help detect invalid cases.
+- **Neo4j is used to track dental clinic activities**, including appointments, payments, and professional schedules.
+- **Graph relationships enforce business rules between Clients** Dentists, and the specific Units where care is provided.
+- **Data integrity constraints prevent inconsistencies**, such as appointments occurring where a dentist is not scheduled to work.
+- **AI-generated questions must respect these rules** focusing on the Client name as the primary search key and correctly identifying financial data within the APPOINTMENT_WITH relationship.
