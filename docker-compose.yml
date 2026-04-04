@@ -4,26 +4,35 @@ services:
   neo4j:
     image: neo4j:5.14.0-community
     container_name: neo4j
-    restart: unless-stopped
+    restart: on-failure
     volumes:
       - ./neo4j/data:/data
       - ./neo4j/logs:/logs
-      - ./neo4j/plugins:/plugins
       - ./import:/var/lib/neo4j/import
     ports:
-      - "7474:7474"  # Neo4j Browser
-      - "7687:7687"  # Bolt Protocol (for queries)
+      - "7474:7474"
+      - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/password
-      - NEO4JLABS_PLUGINS=["apoc"]
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
       - NEO4J_apoc_import_file_enabled=true
-      # CALL apoc.export.csv.all("/var/lib/neo4j/import/neo4j-export.csv", {})
-      # mv /var/lib/neo4j/import/neo4j-export.csv /data/neo4j-export.csv
       - NEO4J_apoc_export_file_enabled=true
       - NEO4J_apoc_import_file_use__neo4j__config=true
 
-    # depends_on:
-    #   - ollama
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=chat_db
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
 
   # ollama:
   #   image: ollama/ollama

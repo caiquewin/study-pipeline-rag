@@ -1,6 +1,10 @@
 import { createServer } from "node:http"
 import { once } from "node:events"
 import { prompt } from "./ai.js"
+import { initDatabase, saveConversation, saveCustomerMessage } from "./database.js"
+
+// Initialize Postgres
+await initDatabase();
 
 // const DEBUG_ENABLED = false
 const DEBUG_ENABLED = true
@@ -9,24 +13,48 @@ const debugLog = (...args) => {
     if (!DEBUG_ENABLED) return
 
     console.log(...args);
-    // const msg = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg);
-    // response.write(msg.toString() + "\n");
 }
-
-
-// await prompt("quantos vendas tiveram?", debugLog);
-
 
 createServer(async (request, response) => {
     try {
         if (request.url === '/v1/chat' && request.method === 'POST') {
             const data = JSON.parse(await once(request, 'data'))
-            debugLog("🔹 Received AI Prompt:", data.prompt);
+            const { prompt: userPrompt, client_id, message } = data;
 
-            const aiResponse = await prompt(data.prompt, debugLog);
+            if (!client_id) {
+                response.writeHead(400, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify({ message: "client_id is required." }));
+                return;
+            }
 
-            response.end(aiResponse.answer || aiResponse.error);
-            return
+            // Cenário 1: Conversa com IA (Prompt)
+            if (userPrompt) {
+                debugLog(`🔹 Received AI Prompt from ${client_id}:`, userPrompt);
+
+                const aiResponse = await prompt(userPrompt, debugLog);
+                const answer = aiResponse.answer || aiResponse.error;
+
+                // Save to chat_history
+                await saveConversation(client_id, userPrompt, answer);
+
+                response.end(answer);
+                return;
+            }
+
+            // Cenário 2: Salvar apenas mensagem simples do cliente
+            if (message) {
+                debugLog(`🔹 Salvando mensagem simples do cliente ${client_id}:`, message);
+                await saveCustomerMessage(client_id, message);
+                
+                response.writeHead(200, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify({ status: "success", message: "Mensagem salva!" }));
+                return;
+            }
+
+            // Caso não tenha nem prompt nem message
+            response.writeHead(400, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ message: "Either 'prompt' (for AI) or 'message' (for history) is required." }));
+            return;
         }
 
         response.writeHead(404, { 'Content-Type': 'application/json' });

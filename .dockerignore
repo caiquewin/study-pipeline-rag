@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+.git
+.env
+postgres_data
+neo4j/data
+neo4j/logs
+neo4j/plugins
+import

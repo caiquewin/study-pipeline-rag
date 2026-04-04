@@ -104,8 +104,8 @@ export async function prompt(question, debugLog = () => { }) {
 
         const schema = await graph.getSchema();
         // debugLog(`Schema`, schema);
-        const nlpTocypherPrompt = await readFile(promptsFiles.nlpToCypher, 'utf-8')
-        const context = await readFile(promptsFiles.context, 'utf-8')
+        const nlpTocypherPrompt = await readFile(promptsFiles.nlpToCypher, 'utf-8');
+        const context = await readFile(promptsFiles.context, 'utf-8');
         const queryPrompt = ChatPromptTemplate.fromTemplate(nlpTocypherPrompt);
 
         const queryChain = queryPrompt.pipe(coderModel).pipe(new StringOutputParser());
@@ -113,7 +113,10 @@ export async function prompt(question, debugLog = () => { }) {
             question: input.question,
             schema,
             context
-        }))
+        })).replace(/  \n/g, '\n')
+            .replace(/\{\{/g, '{')
+            .replace(/\}\}/g, '}')
+            .trim()
 
         return { ...input, query };
     }
@@ -125,18 +128,16 @@ export async function prompt(question, debugLog = () => { }) {
                 debugLog("⚠️ No meaningful results from Neo4j.");
                 return { error: "No results found." };
             }
-
             return { ...input, dbResults };
         }
 
         debugLog("🤖 AI Generated Cypher Query:\n", input.query);
-        const validationResult = await graph.query(`EXPLAIN ${input.query}`);
-        if (!validationResult) {
-            debugLog("❌ Generated query is invalid:", input.query);
-            return { error: "I couldn't generate a valid query." };
+
+        let dbResults = await graph.query(`EXPLAIN ${input.query}`);
+        if (dbResults.length === 0) {
+            dbResults = await graph.query(input.query);
         }
 
-        const dbResults = await graph.query(input.query);
         if (!dbResults || dbResults.length === 0) {
             debugLog("⚠️ No meaningful results from Neo4j.");
             return { error: "No results found." };
