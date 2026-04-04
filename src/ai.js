@@ -11,6 +11,8 @@ const promptsFiles = {
     nlpToCypher: `${promptsFolder}/nlpToCypher.md`,
     responseTemplateFromJson: `${promptsFolder}/responseTemplateFromJson.md`,
     context: `${promptsFolder}/context.md`,
+    scheduling: `${promptsFolder}/scheduling.md`,  // ← adicionar
+    intentDetector: `${promptsFolder}/intentDetector.md`, // ← adicionar
 };
 
 // ✅ Load Neo4j Credentials
@@ -47,6 +49,12 @@ const ollamaEmbeddings = new OllamaEmbeddings({
 
 export async function prompt(question, debugLog = () => { }) {
 
+    const intent = await detectIntent(question); // ✅ chama função externa
+    debugLog(`🎯 Intent detected: ${intent}`);
+
+    if (intent === 'scheduling') {
+        return await scheduleAppointment(question, debugLog); // ✅ chama função externa
+    }
     // ✅ Initialize Neo4j Graph Connection
     const graph = await Neo4jGraph.initialize({
         url: config.url,
@@ -222,4 +230,49 @@ export async function prompt(question, debugLog = () => { }) {
         debugLog("✅ New data stored in Neo4j Vector Store!");
         return input;
     }
+}
+
+async function detectIntent(question) {
+    const intentPrompt = await readFile(promptsFiles.intentDetector, 'utf-8');
+    const intentTemplate = ChatPromptTemplate.fromTemplate(intentPrompt);
+    const intentChain = intentTemplate.pipe(nlpModel).pipe(new StringOutputParser());
+    const intent = await intentChain.invoke({ question });
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return intent.trim().toLowerCase();
+}
+
+// ✅ FORA do prompt()
+async function scheduleAppointment(question, debugLog = () => { }) {
+    const graph = await Neo4jGraph.initialize({
+        url: config.url,
+        username: config.username,
+        password: config.password,
+        enhancedSchema: false,
+    });
+
+    const schedulingPrompt = await readFile(promptsFiles.scheduling, 'utf-8');
+    const context = (await readFile(promptsFiles.context, 'utf-8'))
+        .replace(/\{/g, '{{')
+        .replace(/\}/g, '}}');
+    const schema = await graph.getSchema();
+
+    const scheduleTemplate = ChatPromptTemplate.fromTemplate(schedulingPrompt);
+    const scheduleChain = scheduleTemplate.pipe(coderModel).pipe(new StringOutputParser());
+
+    const query = (await scheduleChain.invoke({ input: question, schema, context }))
+        .replace(/  \n/g, '\n')
+        .replace(/\{\{/g, '{')
+        .replace(/\}\}/g, '}')
+        .trim();
+
+    debugLog("📅 Generated Scheduling Query:\n", query);
+
+    const result = await graph.query(query);
+    await graph.close();
+
+    if (!result || result.length === 0) {
+        return { answer: "I'm sorry, I couldn't complete the scheduling. Please check the details and try again." };
+    }
+
+    return { answer: "✅ Your appointment has been successfully scheduled!" };
 }
