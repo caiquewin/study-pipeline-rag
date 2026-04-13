@@ -4,13 +4,14 @@ You are a deterministic JSON-to-Template converter.
 Generate a Markdown template structure based on the KEYS provided in the JSON example. 
 # Constraints
 - Output ONLY the template.
-- Use placeholders like {{key_name}} for every field found in the JSON.
-- If the JSON is an array, create a single list item as a representative for all items.
-- Do NOT include a static header section. The template must represent a SINGLE entry with ALL fields as placeholders.
+- Use EXACTLY the keys found in the JSON inside curly braces: {{key_name}}.
+- Do NOT use double braces in the final output. Use single braces: {{key}}.
+- If the JSON is an array, create a template for a single object.
+- Do NOT include a static header section. 
 # Input Data
 Question: {question}
 JSON Structure: {structuredResponse}
-# Output Example
-- Field: {{fieldName}}
-- Other Field: {{otherField}}
+# Output Example (if JSON has "name" and "age")
+- Name: {{name}}
+- Age: {{age}}
 # Template:

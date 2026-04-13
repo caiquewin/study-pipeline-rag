@@ -19,35 +19,25 @@ createServer(async (request, response) => {
     try {
         if (request.url === '/v1/chat' && request.method === 'POST') {
             const data = JSON.parse(await once(request, 'data'))
-            const { prompt: userPrompt, client_id, message } = data;
+            const { message = false, client_id = false, } = data;
 
-            if (!client_id) {
-                response.writeHead(400, { 'Content-Type': 'application/json' });
-                response.end(JSON.stringify({ message: "client_id is required." }));
+            if (!client_id || !client_id) {
+                response.writeHead(422, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify({ message: "missing parameters" }));
                 return;
             }
 
             // Cenário 1: Conversa com IA (Prompt)
-            if (userPrompt) {
-                debugLog(`🔹 Received AI Prompt from ${client_id}:`, userPrompt);
-
-                const aiResponse = await prompt(userPrompt, debugLog);
+            if (message) {
+                debugLog(`🔹 Received AI Prompt from ${client_id}:`, message);
+                await saveCustomerMessage(client_id, message);
+                const aiResponse = await prompt(message, debugLog, client_id);
                 const answer = aiResponse.answer || aiResponse.error;
 
                 // Save to chat_history
-                await saveConversation(client_id, userPrompt, answer);
+                await saveConversation(client_id, message, answer);
 
                 response.end(answer);
-                return;
-            }
-
-            // Cenário 2: Salvar apenas mensagem simples do cliente
-            if (message) {
-                debugLog(`🔹 Salvando mensagem simples do cliente ${client_id}:`, message);
-                await saveCustomerMessage(client_id, message);
-                
-                response.writeHead(200, { 'Content-Type': 'application/json' });
-                response.end(JSON.stringify({ status: "success", message: "Mensagem salva!" }));
                 return;
             }
 

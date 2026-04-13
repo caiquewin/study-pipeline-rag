@@ -34,9 +34,15 @@ const dentists = Array.from({ length: 10 }, () => ({
     }))
 }));
 
+// Gera um número de telefone aleatório de qualquer país e remove caracteres não numéricos
+const generatePhoneId = () => {
+    const rawNumber = faker.phone.number(); // Gera algo como "+49 (0) 123 456789" ou "1-541-754-3010"
+    return rawNumber.replace(/\D/g, '');    // Remove tudo que não for número: "490123456789"
+};
+
 // 4. Gerar Clientes e Consultas
 const clients = Array.from({ length: 30 }, () => ({
-    id: faker.string.uuid(),
+    id:  generatePhoneId(),
     name: faker.person.fullName(),
     email: faker.internet.email()
 }));
