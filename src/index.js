@@ -48,7 +48,7 @@ createServer(async (request, response) => {
 }).listen(PORT, () => {
     console.log(`🔗 Endpoint: http://localhost:${PORT}/v1/chat  [POST]`)
     console.log(`🚀 AI Backend running on port ${PORT}`)
-})
+});
 
 ['uncaughtException', 'unhandledRejection'].forEach(event => process.on(event, error => {
     console.error("❌ Unhandled Error:", error.stack);

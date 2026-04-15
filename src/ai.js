@@ -10,7 +10,9 @@ import { readFile } from 'node:fs/promises'
 
 const INTENT = {
     GREETING:   'greeting',
-    SCHEDULING: 'scheduling',
+    BOOK:       'book',
+    CANCEL:     'cancel',
+    RESCHEDULE: 'reschedule',
     QUERY:      'query',
 }
 
@@ -51,23 +53,26 @@ const vectorConfig = {
     nodeLabel:          'Chunk',
 }
 
-// ── Preload prompt files once at startup ──────────────────────────────────────
-// Prompts are static files — reading them per-request wastes disk I/O.
+// ── Preload all prompt files once at startup ──────────────────────────────────
 
 const [
     nlpToCypherPrompt,
     responseTemplatePrompt,
     contextPrompt,
-    schedulingPrompt,
     intentDetectorPrompt,
     welcomePrompt,
+    bookPrompt,
+    cancelPrompt,
+    reschedulePrompt,
 ] = await Promise.all([
     readFile('./prompts/nlpToCypher.md', 'utf-8'),
     readFile('./prompts/responseTemplateFromJson.md', 'utf-8'),
     readFile('./prompts/context.md', 'utf-8'),
-    readFile('./prompts/scheduling.md', 'utf-8'),
     readFile('./prompts/intentDetector.md', 'utf-8'),
     readFile('./prompts/welcome.md', 'utf-8'),
+    readFile('./prompts/book.md', 'utf-8'),
+    readFile('./prompts/cancel.md', 'utf-8'),
+    readFile('./prompts/reschedule.md', 'utf-8'),
 ])
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,18 +94,12 @@ function cleanCypher(raw) {
         .trim()
 }
 
-// Both DELETE and MERGE/CREATE → reschedule; only DELETE → cancel; else → schedule
-function detectActionType(query) {
-    const lower = query.toLowerCase()
-    const hasDelete = lower.includes('delete')
-    const hasWrite  = lower.includes('merge') || lower.includes('create')
-    if (hasDelete && hasWrite) return 'reschedule'
-    if (hasDelete)             return 'cancel'
-    return 'schedule'
-}
-
 function extractDatesFromCypher(query) {
     return [...new Set(query.match(/\d{4}-\d{2}-\d{2}/g) ?? [])]
+}
+
+function safeId(client_id) {
+    return client_id.replace(/"/g, '')
 }
 
 // ── Intent detection ──────────────────────────────────────────────────────────
@@ -108,6 +107,132 @@ function extractDatesFromCypher(query) {
 async function detectIntent(question) {
     const intent = await invokeChain(intentDetectorPrompt, nlpModel, { question })
     return intent.trim().toLowerCase()
+}
+
+// ── Scheduling — shared helpers ───────────────────────────────────────────────
+
+/**
+ * Generates and executes a write Cypher via the given prompt.
+ * Returns { query, result } or throws on syntax error.
+ */
+async function runWriteQuery(graph, promptText, input) {
+    const schema = await graph.getSchema()
+    const query = cleanCypher(
+        await invokeChain(promptText, coderModel, { ...input, schema })
+    )
+
+    try {
+        await graph.query(`EXPLAIN ${query}`)
+    } catch (err) {
+        throw Object.assign(new Error('Cypher syntax error'), { cypherError: err.message, query })
+    }
+
+    const result = await graph.query(query)
+    return { query, result }
+}
+
+/**
+ * Fetches the most recent appointment for a client (used as confirmation).
+ */
+async function fetchLastAppointment(graph, client_id) {
+    const [row] = (await graph.query(`
+        MATCH (c:Client {id: "${safeId(client_id)}"})-[a:APPOINTMENT_WITH]->(d:Dentist)
+        MATCH (c)-[:VISITED {date: a.date}]->(u:Unit)
+        RETURN d.name AS dentist, u.name AS unit, a.date AS date, a.status AS status
+        ORDER BY a.date DESC
+        LIMIT 1
+    `)) ?? []
+    return row
+}
+
+function appointmentCard(title, appointment) {
+    if (!appointment) {
+        return `✅ ${title}! Use *ver minhas consultas* para conferir os detalhes.`
+    }
+    return [
+        `✅ *${title} com sucesso!*`,
+        '',
+        `👨‍⚕️ *Dentista:* ${appointment.dentist}`,
+        `🏥 *Unidade:*   ${appointment.unit}`,
+        `📅 *Data:*      ${appointment.date}`,
+        `📋 *Status:*    ${appointment.status}`,
+        '',
+        'Posso te ajudar com mais alguma coisa?',
+    ].join('\n')
+}
+
+// ── Handler: Book ─────────────────────────────────────────────────────────────
+
+async function bookAppointment(question, debugLog, client_id) {
+    const graph = await initNeo4jGraph()
+    try {
+        const { query } = await runWriteQuery(graph, bookPrompt, {
+            input: question,
+            context: contextPrompt,
+            client_id,
+        })
+        debugLog('📅 Book query:\n', query)
+
+        const appointment = await fetchLastAppointment(graph, client_id)
+        return { answer: appointmentCard('Consulta agendada', appointment) }
+
+    } catch (err) {
+        debugLog('❌ Book error:', err.message)
+        return { answer: 'Não consegui agendar. Por favor, informe o nome do dentista e a data desejada (ex: *agendar com Dr. João para 2026-05-10*).' }
+    } finally {
+        await graph.close()
+    }
+}
+
+// ── Handler: Cancel ───────────────────────────────────────────────────────────
+
+async function cancelAppointment(question, debugLog, client_id) {
+    const graph = await initNeo4jGraph()
+    try {
+        const { query } = await runWriteQuery(graph, cancelPrompt, {
+            input: question,
+            client_id,
+        })
+        debugLog('❌ Cancel query:\n', query)
+
+        const [date] = extractDatesFromCypher(query)
+        const dateStr = date ? `do dia *${date}*` : ''
+        return {
+            answer: [
+                `✅ *Consulta ${dateStr} cancelada com sucesso!*`,
+                '',
+                'Posso te ajudar com mais alguma coisa?',
+            ].join('\n')
+        }
+
+    } catch (err) {
+        debugLog('❌ Cancel error:', err.message)
+        return { answer: 'Não consegui cancelar. Por favor, informe a data da consulta que deseja cancelar.' }
+    } finally {
+        await graph.close()
+    }
+}
+
+// ── Handler: Reschedule ───────────────────────────────────────────────────────
+
+async function rescheduleAppointment(question, debugLog, client_id) {
+    const graph = await initNeo4jGraph()
+    try {
+        const { query } = await runWriteQuery(graph, reschedulePrompt, {
+            input: question,
+            client_id,
+        })
+        debugLog('🔄 Reschedule query:\n', query)
+
+        const appointment = await fetchLastAppointment(graph, client_id)
+        return { answer: appointmentCard('Consulta reagendada', appointment) }
+
+    } catch (err) {
+        debugLog('❌ Reschedule error:', err.message)
+        return { answer: 'Não consegui reagendar. Por favor, informe a data atual e a nova data (ex: *reagendar de 2026-04-20 para 2026-04-27*).' }
+    } finally {
+        await graph.close()
+    }
 }
 
 // ── Main prompt handler ───────────────────────────────────────────────────────
@@ -122,18 +247,30 @@ export async function prompt(question, debugLog = () => {}, client_id, isNewUser
     debugLog(`🎯 Intent: ${intent}`)
 
     if (intent === INTENT.GREETING) {
-        debugLog(`👋 Greeting (isNewUser: ${isNewUser})`)
         const answer = await invokeChain(welcomePrompt, nlpModel, { question, isNewUser })
         return { answer, intent: 'welcome' }
     }
 
-    if (intent === INTENT.SCHEDULING) {
-        debugLog('📅 Scheduling intent')
-        const result = await scheduleAppointment(questionWithContext, debugLog, client_id)
+    if (intent === INTENT.BOOK) {
+        debugLog('📅 Booking appointment')
+        const result = await bookAppointment(questionWithContext, debugLog, client_id)
         return { ...result, intent }
     }
 
-    // Query intent — vector cache → Cypher → NLP → response
+    if (intent === INTENT.CANCEL) {
+        debugLog('❌ Cancelling appointment')
+        const result = await cancelAppointment(questionWithContext, debugLog, client_id)
+        return { ...result, intent }
+    }
+
+    if (intent === INTENT.RESCHEDULE) {
+        debugLog('🔄 Rescheduling appointment')
+        const result = await rescheduleAppointment(questionWithContext, debugLog, client_id)
+        return { ...result, intent }
+    }
+
+    // ── Query intent — vector cache → Cypher → NLP → response ────────────────
+
     const graph = await initNeo4jGraph()
     const vectorIndex = await Neo4jVectorStore.fromExistingGraph(ollamaEmbeddings, vectorConfig)
 
@@ -260,65 +397,5 @@ export async function prompt(question, debugLog = () => {}, client_id, isNewUser
         })
 
         return { ...input, answer: formattedEntries.join('\n\n') }
-    }
-}
-
-// ── Appointment scheduling / cancellation ─────────────────────────────────────
-
-async function scheduleAppointment(question, debugLog = () => {}, client_id) {
-    const graph = await initNeo4jGraph()
-    try {
-        const schema = await graph.getSchema()
-        const query = cleanCypher(
-            await invokeChain(schedulingPrompt, coderModel, { input: question, schema, context: contextPrompt, client_id })
-        )
-        debugLog('📅 Generated Scheduling Query:\n', query)
-
-        try {
-            await graph.query(`EXPLAIN ${query}`)
-        } catch {
-            debugLog('❌ Scheduling syntax error')
-            return { answer: 'Não consegui entender o pedido. Por favor, informe o nome do dentista e a data desejada (ex: *agendar com Dr. João para 2026-05-10*).' }
-        }
-
-        const action = detectActionType(query)
-        debugLog(`🎯 Scheduling action: ${action}`)
-
-        await graph.query(query)
-
-        if (action === 'cancel') {
-            const [date] = extractDatesFromCypher(query)
-            const dateStr = date ? `do dia *${date}*` : 'solicitada'
-            return { answer: `✅ Consulta ${dateStr} cancelada com sucesso!\n\nPosso te ajudar com mais alguma coisa?` }
-        }
-
-        // Confirm what was scheduled/rescheduled
-        const safeClientId = client_id.replace(/"/g, '')
-        const [appointment] = (await graph.query(`
-            MATCH (c:Client {id: "${safeClientId}"})-[a:APPOINTMENT_WITH]->(d:Dentist)
-            MATCH (c)-[:VISITED {date: a.date}]->(u:Unit)
-            RETURN d.name AS dentist, u.name AS unit, a.date AS date, a.status AS status
-            ORDER BY a.date DESC LIMIT 1
-        `)) ?? []
-
-        if (!appointment) {
-            return { answer: '✅ Solicitação processada! Não encontrei os detalhes para confirmar — use *ver minhas consultas* para conferir.' }
-        }
-
-        const prefix = action === 'reschedule' ? 'Consulta reagendada' : 'Consulta agendada'
-        return {
-            answer: [
-                `✅ *${prefix} com sucesso!*`,
-                '',
-                `👨‍⚕️ *Dentista:* ${appointment.dentist}`,
-                `🏥 *Unidade:*   ${appointment.unit}`,
-                `📅 *Data:*      ${appointment.date}`,
-                `📋 *Status:*    ${appointment.status}`,
-                '',
-                'Posso te ajudar com mais alguma coisa?',
-            ].join('\n')
-        }
-    } finally {
-        await graph.close()
     }
 }
