@@ -7,7 +7,10 @@
     "dev": "node --env-file .env --watch src/index.js",
     "seed": "node --env-file .env --watch data/seed.js",
     "db-init": "node --env-file .env data/create-schema.js && node --env-file .env data/clinic-data-seed.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "db-cleanup": "node --env-file .env data/cleanup.js",
+    "db-reset": "npm run db-cleanup && npm run db-init",
+    "test": "node --env-file .env tests/e2e.js",
+    "turbo-quant": "node tests/turbo-quant-demo.js"
   },
   "keywords": [],
   "author": "erickwendel",

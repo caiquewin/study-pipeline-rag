@@ -9,27 +9,14 @@ BEGIN
 END $$;
 
 -- 2. Garantir conexão no banco correto
--- (isso aqui resolve MUITO bug escondido)
 SELECT current_database();
 
--- 3. Criar tabela clients
-CREATE TABLE IF NOT EXISTS public.clients (
+-- 3. Criar tabela única customer usando JSONB (Melhor prática)
+CREATE TABLE IF NOT EXISTS public.customer (
     client_id TEXT PRIMARY KEY,
-    name TEXT NOT NULL
+    chat_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+    attributes JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
--- 4. Criar tabela messages
-CREATE TABLE IF NOT EXISTS public.messages (
-    id SERIAL PRIMARY KEY,
-    client_id TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_client
-        FOREIGN KEY (client_id)
-        REFERENCES public.clients(client_id)
-        ON DELETE CASCADE
-);
-
--- 5. Permissões
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO app_user;
+-- 4. Permissões
+GRANT ALL PRIVILEGES ON TABLE public.customer TO app_user;

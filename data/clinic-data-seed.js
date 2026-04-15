@@ -10,7 +10,7 @@ const session = driver.session();
 // 1. Definições de Domínio
 const specializations = ["Ortodontia", "Implantodontia", "Odontopediatria", "Endodontia", "Estética", "Periodontia"];
 const weekdays = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
-const treatmentStatus = ["Não Inicializado", "Em Andamento", "Completo"];
+const treatmentStatus = ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"];
 
 // 2. Gerar Unidades (Clinics)
 const clinics = Array.from({ length: 5 }, () => ({

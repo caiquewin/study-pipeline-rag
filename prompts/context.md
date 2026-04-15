@@ -131,7 +131,7 @@ IMPORTANT:
 * Always connect `VISITED` and `APPOINTMENT_WITH` using the same `date`.
 * Never assume a Unit without verifying a `VISITED` relationship.
 * Always validate that the Dentist works at the Unit (`WORKS_AT`).
-* Prefer using parameters (`$param`) instead of hardcoded values.
+* Never use `$param` syntax. Always inline actual values directly into the query.
 
 ---
 

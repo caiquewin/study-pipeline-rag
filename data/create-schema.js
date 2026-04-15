@@ -12,28 +12,26 @@ const pool = new Pool({
 async function createSimpleSchema() {
     const client = await pool.connect();
     try {
-        console.log("🚀 Criando tabela simples de mensagens...");
+        console.log("🚀 Criando a tabela de histórico em JSONB (customer)...");
 
-        // Criar a tabela sem chaves estrangeiras para evitar erros de dependência
+        // Criar a tabela única customer com JSONB
         await client.query(`
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id SERIAL PRIMARY KEY,
-                client_id TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS customer (
+                client_id TEXT PRIMARY KEY,
+                chat_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+                attributes JSONB NOT NULL DEFAULT '{}'::jsonb
             );
         `);
         
-        console.log("✅ Tabela 'chat_messages' pronta!");
+        console.log("✅ Tabela 'customer' pronta!");
 
-        // Garantir que o usuário tenha acesso
+        // Garantir permissões
         await client.query(`
-            GRANT ALL PRIVILEGES ON TABLE chat_messages TO postgres;
-            GRANT ALL PRIVILEGES ON SEQUENCE chat_messages_id_seq TO postgres;
+            GRANT ALL PRIVILEGES ON TABLE customer TO ${process.env.PGUSER};
         `);
 
     } catch (err) {
-        console.error("❌ Erro:", err.message);
+        console.error("❌ Erro ao inicializar o banco:", err.message);
     } finally {
         client.release();
         await pool.end();

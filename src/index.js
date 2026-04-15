@@ -1,67 +1,56 @@
 import { createServer } from "node:http"
 import { once } from "node:events"
 import { prompt } from "./ai.js"
-import { initDatabase, saveConversation, saveCustomerMessage } from "./database.js"
+import { initDatabase, saveConversation, getCustomer } from "./database.js"
 
-// Initialize Postgres
 await initDatabase();
 
-// const DEBUG_ENABLED = false
 const DEBUG_ENABLED = true
 const PORT = process.env.PORT || 3002;
-const debugLog = (...args) => {
-    if (!DEBUG_ENABLED) return
-
-    console.log(...args);
-}
+const debugLog = (...args) => { if (DEBUG_ENABLED) console.log(...args) }
 
 createServer(async (request, response) => {
     try {
         if (request.url === '/v1/chat' && request.method === 'POST') {
             const data = JSON.parse(await once(request, 'data'))
-            const { message = false, client_id = false, } = data;
+            const { message = false, client_id = false } = data
 
-            if (!client_id || !client_id) {
-                response.writeHead(422, { 'Content-Type': 'application/json' });
-                response.end(JSON.stringify({ message: "missing parameters" }));
-                return;
+            if (!client_id || !message) {
+                response.writeHead(422, { 'Content-Type': 'application/json' })
+                response.end(JSON.stringify({ message: 'missing parameters' }))
+                return
             }
 
-            // Cenário 1: Conversa com IA (Prompt)
-            if (message) {
-                debugLog(`🔹 Received AI Prompt from ${client_id}:`, message);
-                await saveCustomerMessage(client_id, message);
-                const aiResponse = await prompt(message, debugLog, client_id);
-                const answer = aiResponse.answer || aiResponse.error;
+            const customer = await getCustomer(client_id)
+            const isNewUser = !customer
+            const history = customer?.chat_history || []
 
-                // Save to chat_history
-                await saveConversation(client_id, message, answer);
+            debugLog(`🔹 [${client_id}] (New: ${isNewUser}):`, message)
 
-                response.end(answer);
-                return;
-            }
+            const aiResponse = await prompt(message, debugLog, client_id, isNewUser, history)
+            const answer = aiResponse.answer || aiResponse.error
+            const intent = aiResponse.intent || 'unknown'
 
-            // Caso não tenha nem prompt nem message
-            response.writeHead(400, { 'Content-Type': 'application/json' });
-            response.end(JSON.stringify({ message: "Either 'prompt' (for AI) or 'message' (for history) is required." }));
-            return;
+            await saveConversation(client_id, message, answer, { intent })
+            response.end(answer)
+            return
         }
 
-        response.writeHead(404, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ message: "Not Found" }));
+        response.writeHead(404, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ message: 'Not Found' }))
 
     } catch (error) {
-        console.error("❌ AI Backend Error:", error.stack);
-        response.writeHead(500, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ message: "Internal Server Error" }));
+        console.error('❌ AI Backend Error:', error.stack)
+        response.writeHead(500, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ message: 'Internal Server Error' }))
     }
 
 }).listen(PORT, () => {
-    console.log(`🔗 Endpoint de chat: http://localhost:${PORT}/v1/chat (Método: POST)`);
-    console.log("🚀 AI Backend running on port 3001")
-});
+    console.log(`🔗 Endpoint: http://localhost:${PORT}/v1/chat  [POST]`)
+    console.log(`🚀 AI Backend running on port ${PORT}`)
+})
 
-['uncatchException', 'unhandledRejection'].forEach(event => process.on(event, error => {
+['uncaughtException', 'unhandledRejection'].forEach(event => process.on(event, error => {
     console.error("❌ Unhandled Error:", error.stack);
     process.exit(1);
 }));
